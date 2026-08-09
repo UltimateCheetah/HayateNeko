@@ -17,16 +17,16 @@
 
 <style>
   :root {
-    --bg: #0c0d10;
-    --panel: #15171c;
-    --panel-border: #262a33;
-    --accent: #6ee7ff;
-    --accent-dim: #2a8fa8;
-    --text: #e8ecf1;
-    --text-dim: #8b93a1;
-    --ok: #6ee7b0;
-    --warn: #ffb86e;
-    --err: #ff6e6e;
+    --bg: #0a120c;
+    --panel: #121a14;
+    --panel-border: #253327;
+    --accent: #8fe36a;
+    --accent-dim: #3e7a3a;
+    --text: #e9f2ea;
+    --text-dim: #93a596;
+    --ok: #8fe36a;
+    --warn: #ffcf6e;
+    --err: #ff7a7a;
   }
 
   * { box-sizing: border-box; }
@@ -40,13 +40,16 @@
     overflow: hidden;
   }
 
-  #scene-container {
-    position: fixed;
-    inset: 0;
-  }
+  #scene-container { position: fixed; inset: 0; }
+  #scene-container canvas { display: block; }
 
-  #scene-container canvas {
-    display: block;
+  .ui-layer {
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  body.ui-hidden .ui-layer {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
   }
 
   /* top status bar */
@@ -57,7 +60,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    background: rgba(21, 23, 28, 0.85);
+    background: rgba(18, 26, 20, 0.85);
     border: 1px solid var(--panel-border);
     backdrop-filter: blur(8px);
     padding: 8px 14px;
@@ -68,9 +71,7 @@
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+    width: 8px; height: 8px; border-radius: 50%;
     background: var(--text-dim);
     flex-shrink: 0;
     transition: background 0.2s ease;
@@ -79,10 +80,30 @@
   .dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
   .dot.err { background: var(--err); box-shadow: 0 0 8px var(--err); }
 
+  /* hide/show panels toggle - always visible, never hidden by ui-hidden */
+  #ui-toggle-btn {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 30;
+    padding: 9px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: rgba(18, 26, 20, 0.85);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #ui-toggle-btn:hover { border-color: var(--accent-dim); }
+
   /* webcam preview */
   #webcam-wrap {
     position: fixed;
-    top: 16px;
+    top: 62px;
     right: 16px;
     width: 176px;
     height: 132px;
@@ -93,22 +114,12 @@
     z-index: 20;
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
-  #webcam-wrap video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transform: scaleX(-1);
-  }
+  #webcam-wrap video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   #webcam-wrap .label {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    font-size: 10px;
-    text-align: center;
-    padding: 3px 0;
-    background: rgba(0,0,0,0.55);
-    color: var(--text-dim);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    position: absolute; bottom: 0; left: 0; right: 0;
+    font-size: 10px; text-align: center; padding: 3px 0;
+    background: rgba(0,0,0,0.55); color: var(--text-dim);
+    letter-spacing: 0.04em; text-transform: uppercase;
   }
 
   /* control panel */
@@ -119,7 +130,7 @@
     width: 300px;
     max-height: calc(100vh - 32px);
     overflow-y: auto;
-    background: rgba(21, 23, 28, 0.9);
+    background: rgba(18, 26, 20, 0.9);
     border: 1px solid var(--panel-border);
     backdrop-filter: blur(8px);
     border-radius: 14px;
@@ -128,146 +139,75 @@
   }
 
   #panel h1 {
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-dim);
-    margin: 0 0 14px;
-    font-weight: 600;
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-dim); margin: 0 0 14px; font-weight: 600;
   }
 
-  .section {
-    margin-bottom: 16px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--panel-border);
-  }
+  .section { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--panel-border); }
   .section:last-of-type { border-bottom: none; }
 
   .section-title {
-    font-size: 11px;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 10px;
-    font-weight: 600;
+    font-size: 11px; color: var(--accent); text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 10px; font-weight: 600;
   }
 
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-  .row label {
-    width: 56px;
-    flex-shrink: 0;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .row input[type="range"] {
-    flex: 1;
-    accent-color: var(--accent);
-  }
-  .row .val {
-    width: 42px;
-    flex-shrink: 0;
-    text-align: right;
-    font-size: 11px;
-    color: var(--text-dim);
-    font-variant-numeric: tabular-nums;
-  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .row label { width: 56px; flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
+  .row input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .row .val { width: 42px; flex-shrink: 0; text-align: right; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-    font-size: 13px;
-  }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 13px; }
 
   button {
-    width: 100%;
-    padding: 9px;
-    border-radius: 8px;
-    border: 1px solid var(--panel-border);
-    background: #1c1f26;
-    color: var(--text);
-    font-size: 13px;
-    cursor: pointer;
+    width: 100%; padding: 9px; border-radius: 8px; border: 1px solid var(--panel-border);
+    background: #172018; color: var(--text); font-size: 13px; cursor: pointer;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
-  button:hover { border-color: var(--accent-dim); background: #20242c; }
+  button:hover { border-color: var(--accent-dim); background: #1c261d; }
   button:active { transform: translateY(1px); }
   button.primary {
     background: linear-gradient(135deg, var(--accent-dim), var(--accent));
-    color: #08161a;
-    border: none;
-    font-weight: 600;
+    color: #0a1409; border: none; font-weight: 600;
   }
   button.primary:hover { filter: brightness(1.08); }
-  button.primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-    filter: none;
-  }
+  button.primary:disabled { opacity: 0.5; cursor: default; filter: none; }
+  button.small { padding: 7px; font-size: 12px; margin-top: 6px; }
 
-  /* switch */
-  .switch {
-    position: relative;
-    width: 38px;
-    height: 22px;
-    flex-shrink: 0;
-  }
+  .switch { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
   .switch input { opacity: 0; width: 0; height: 0; }
-  .switch .slider {
-    position: absolute; inset: 0;
-    background: #2a2e37;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
+  .switch .slider { position: absolute; inset: 0; background: #22301f; border-radius: 999px; cursor: pointer; transition: background 0.15s ease; }
   .switch .slider::before {
-    content: "";
-    position: absolute;
-    width: 16px; height: 16px;
-    left: 3px; top: 3px;
-    background: #cfd6e0;
-    border-radius: 50%;
-    transition: transform 0.15s ease, background 0.15s ease;
+    content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
+    background: #cfd6c9; border-radius: 50%; transition: transform 0.15s ease, background 0.15s ease;
   }
   .switch input:checked + .slider { background: var(--accent-dim); }
-  .switch input:checked + .slider::before {
-    transform: translateX(16px);
-    background: var(--accent);
+  .switch input:checked + .slider::before { transform: translateX(16px); background: var(--accent); }
+
+  #load-error {
+    display: none;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--warn);
+    background: rgba(255, 207, 110, 0.08);
+    border: 1px solid rgba(255, 207, 110, 0.3);
+    border-radius: 8px;
+    padding: 10px;
+    margin-top: 10px;
   }
 
   #loading-overlay {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 12px;
-    background: var(--bg);
-    z-index: 50;
-    transition: opacity 0.4s ease;
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; background: var(--bg); z-index: 50; transition: opacity 0.4s ease;
   }
   #loading-overlay .spinner {
-    width: 34px; height: 34px;
-    border-radius: 50%;
-    border: 3px solid #262a33;
-    border-top-color: var(--accent);
-    animation: spin 0.9s linear infinite;
+    width: 34px; height: 34px; border-radius: 50%; border: 3px solid #253327;
+    border-top-color: var(--accent); animation: spin 0.9s linear infinite;
   }
-  #loading-overlay .msg {
-    font-size: 13px;
-    color: var(--text-dim);
-  }
+  #loading-overlay .msg { font-size: 13px; color: var(--text-dim); text-align: center; max-width: 380px; padding: 0 20px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-thumb { background: #2a2e37; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: #253327; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -279,7 +219,9 @@
   <div class="msg" id="loading-msg">Loading VRM model…</div>
 </div>
 
-<div id="status-bar">
+<button id="ui-toggle-btn" title="Toggle panels (H)">Hide panels</button>
+
+<div id="status-bar" class="ui-layer">
   <span class="dot" id="model-dot"></span>
   <span id="model-status">Model: loading</span>
   <span style="opacity:0.3">|</span>
@@ -287,12 +229,12 @@
   <span id="cam-status">Camera: off</span>
 </div>
 
-<div id="webcam-wrap" style="display:none;">
+<div id="webcam-wrap" class="ui-layer" style="display:none;">
   <video id="webcam-video" autoplay playsinline muted></video>
   <div class="label">Tracking source</div>
 </div>
 
-<div id="panel">
+<div id="panel" class="ui-layer">
   <h1>VRM Face Tracker</h1>
 
   <div class="section">
@@ -353,6 +295,14 @@
     </div>
     <button id="cam-btn" class="primary">Start camera tracking</button>
   </div>
+
+  <div class="section" id="model-source-section">
+    <div class="section-title">Model source</div>
+    <div style="font-size:11px; color:var(--text-dim); word-break:break-all; line-height:1.5;" id="model-url-display"></div>
+    <div id="load-error"></div>
+    <button id="retry-btn" class="small" style="display:none;">Retry loading this URL</button>
+    <button id="fallback-btn" class="small" style="display:none;">Load sample VRM instead</button>
+  </div>
 </div>
 
 <script type="module">
@@ -365,6 +315,8 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 // Hardcoded VRM source (raw.githubusercontent.com)
 // ---------------------------------------------------------------------------
 const VRM_URL = 'https://raw.githubusercontent.com/UltimateCheetah/HayateNeko/main/HayateNeko.vrm';
+// Known-good public sample, offered as a one-click fallback if the URL above fails to load.
+const FALLBACK_VRM_URL = 'https://raw.githubusercontent.com/pixiv/three-vrm/dev/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -394,6 +346,12 @@ const sensitivitySlider = document.getElementById('sensitivity');
 const smoothingSlider = document.getElementById('smoothing');
 const camBtn = document.getElementById('cam-btn');
 
+const uiToggleBtn = document.getElementById('ui-toggle-btn');
+const modelUrlDisplay = document.getElementById('model-url-display');
+const loadErrorEl = document.getElementById('load-error');
+const retryBtn = document.getElementById('retry-btn');
+const fallbackBtn = document.getElementById('fallback-btn');
+
 function bindSlider(input, valEl, fmt) {
   const update = () => { valEl.textContent = fmt(parseFloat(input.value)); };
   input.addEventListener('input', update);
@@ -407,14 +365,25 @@ bindSlider(scaleSlider, document.getElementById('scale-val'), v => v.toFixed(2))
 bindSlider(sensitivitySlider, document.getElementById('sensitivity-val'), v => v.toFixed(2));
 bindSlider(smoothingSlider, document.getElementById('smoothing-val'), v => Math.round(v).toString());
 
+// hide / show panels
+function setUiHidden(hidden) {
+  document.body.classList.toggle('ui-hidden', hidden);
+  uiToggleBtn.textContent = hidden ? 'Show panels' : 'Hide panels';
+}
+uiToggleBtn.addEventListener('click', () => setUiHidden(!document.body.classList.contains('ui-hidden')));
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H') {
+    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+    setUiHidden(!document.body.classList.contains('ui-hidden'));
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Three.js scene
 // ---------------------------------------------------------------------------
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0c0d10);
-scene.fog = new THREE.Fog(0x0c0d10, 6, 14);
 
-const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 40);
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 60);
 // Camera positioned in front of the model (+Z) at roughly chest/head height,
 // looking straight at the model so it "faces the front".
 camera.position.set(0, 1.35, 2.4);
@@ -430,35 +399,9 @@ controls.target.set(0, 1.2, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 0.8;
-controls.maxDistance = 8;
+controls.maxDistance = 12;
+controls.maxPolarAngle = Math.PI * 0.53;
 controls.update();
-
-// Lighting
-const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x1a1410, 0.9);
-scene.add(hemi);
-
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
-keyLight.position.set(1.2, 2.4, 2.0);
-keyLight.castShadow = true;
-keyLight.shadow.mapSize.set(1024, 1024);
-scene.add(keyLight);
-
-const rimLight = new THREE.DirectionalLight(0x6ee7ff, 0.6);
-rimLight.position.set(-1.5, 1.8, -1.5);
-scene.add(rimLight);
-
-// Ground
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(6, 48),
-  new THREE.MeshStandardMaterial({ color: 0x14161b, roughness: 1, metalness: 0 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-
-const grid = new THREE.GridHelper(6, 24, 0x2a2e37, 0x1c1f26);
-grid.position.y = 0.001;
-scene.add(grid);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -467,7 +410,204 @@ window.addEventListener('resize', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Load VRM
+// Jungle environment
+// ---------------------------------------------------------------------------
+
+// Hazy canopy-green fog to give the scene depth and mood
+scene.fog = new THREE.FogExp2(0x1b3a24, 0.055);
+
+// Sky dome — vertical gradient from deep canopy shadow to a hazy sunlit green,
+// visible from any orbit angle (unlike a flat background texture).
+function makeSkyDome() {
+  const uniforms = {
+    topColor: { value: new THREE.Color(0x0d2415) },
+    bottomColor: { value: new THREE.Color(0x8fae5a) },
+    offset: { value: 8 },
+    exponent: { value: 0.7 },
+  };
+  const skyMat = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor;
+      uniform vec3 bottomColor;
+      uniform float offset;
+      uniform float exponent;
+      varying vec3 vWorldPosition;
+      void main() {
+        float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
+        gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+    fog: false,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(45, 24, 16), skyMat);
+  scene.add(sky);
+}
+makeSkyDome();
+
+// Mottled jungle-floor texture, generated procedurally on a canvas
+function makeGroundTexture() {
+  const size = 512;
+  const cnv = document.createElement('canvas');
+  cnv.width = cnv.height = size;
+  const ctx = cnv.getContext('2d');
+  ctx.fillStyle = '#2b4a29';
+  ctx.fillRect(0, 0, size, size);
+  const blotchColors = ['#33552f', '#254421', '#3d5a30', '#1e3a1c', '#4a5f2e'];
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = blotchColors[i % blotchColors.length];
+    ctx.globalAlpha = 0.18 + Math.random() * 0.25;
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 4 + Math.random() * 18;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.5 + Math.random() * 0.6), Math.random() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 6);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(22, 64),
+  new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness: 1, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// A clearing ring near the model so it doesn't get lost in foliage
+const clearing = new THREE.Mesh(
+  new THREE.CircleGeometry(2.4, 48),
+  new THREE.MeshStandardMaterial({ color: 0x3c5a34, roughness: 1 })
+);
+clearing.rotation.x = -Math.PI / 2;
+clearing.position.y = 0.002;
+clearing.receiveShadow = true;
+scene.add(clearing);
+
+// Procedural low-poly jungle trees, instanced for performance
+function buildTree() {
+  const group = new THREE.Group();
+
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3624, roughness: 1 });
+  const trunkHeight = 2.4 + Math.random() * 1.6;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.16, trunkHeight, 6), trunkMat);
+  trunk.position.y = trunkHeight / 2;
+  trunk.castShadow = true;
+  group.add(trunk);
+
+  const leafColors = [0x2f6b2a, 0x3c8032, 0x255722, 0x4a8f3a];
+  const clumps = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < clumps; i++) {
+    const leafMat = new THREE.MeshStandardMaterial({
+      color: leafColors[Math.floor(Math.random() * leafColors.length)],
+      roughness: 0.9,
+      flatShading: true,
+    });
+    const r = 0.6 + Math.random() * 0.7;
+    const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), leafMat);
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * 0.5;
+    leaf.position.set(Math.cos(angle) * dist, trunkHeight + Math.random() * 0.8, Math.sin(angle) * dist);
+    leaf.scale.y = 0.7 + Math.random() * 0.4;
+    leaf.rotation.y = Math.random() * Math.PI;
+    leaf.castShadow = true;
+    group.add(leaf);
+  }
+  return group;
+}
+
+function scatterTrees(count, minRadius, maxRadius) {
+  const treesGroup = new THREE.Group();
+  for (let i = 0; i < count; i++) {
+    const tree = buildTree();
+    const angle = Math.random() * Math.PI * 2;
+    const dist = minRadius + Math.random() * (maxRadius - minRadius);
+    tree.position.set(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+    const s = 0.8 + Math.random() * 0.7;
+    tree.scale.set(s, s, s);
+    tree.rotation.y = Math.random() * Math.PI * 2;
+    treesGroup.add(tree);
+  }
+  scene.add(treesGroup);
+}
+scatterTrees(26, 3.2, 10);
+scatterTrees(20, 10, 18);
+
+// Soft glowing "fireflies" drifting through the undergrowth
+function makeGlowTexture() {
+  const size = 64;
+  const cnv = document.createElement('canvas');
+  cnv.width = cnv.height = size;
+  const ctx = cnv.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,244,180,1)');
+  grad.addColorStop(1, 'rgba(255,244,180,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(cnv);
+}
+const fireflyCount = 24;
+const fireflyGeo = new THREE.BufferGeometry();
+const fireflyBase = [];
+const firefliesPos = new Float32Array(fireflyCount * 3);
+for (let i = 0; i < fireflyCount; i++) {
+  const angle = Math.random() * Math.PI * 2;
+  const dist = 1.5 + Math.random() * 7;
+  const base = { x: Math.cos(angle) * dist, y: 0.4 + Math.random() * 1.6, z: Math.sin(angle) * dist, phase: Math.random() * Math.PI * 2, speed: 0.4 + Math.random() * 0.6 };
+  fireflyBase.push(base);
+  firefliesPos[i * 3] = base.x;
+  firefliesPos[i * 3 + 1] = base.y;
+  firefliesPos[i * 3 + 2] = base.z;
+}
+fireflyGeo.setAttribute('position', new THREE.BufferAttribute(firefliesPos, 3));
+const fireflyMat = new THREE.PointsMaterial({
+  size: 0.12,
+  map: makeGlowTexture(),
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  color: 0xfff2b0,
+});
+const fireflies = new THREE.Points(fireflyGeo, fireflyMat);
+scene.add(fireflies);
+
+// ---------------------------------------------------------------------------
+// Lighting — dappled canopy light
+// ---------------------------------------------------------------------------
+const hemi = new THREE.HemisphereLight(0xbfe08a, 0x1a2410, 0.85);
+scene.add(hemi);
+
+const keyLight = new THREE.DirectionalLight(0xdff3b8, 2.0);
+keyLight.position.set(1.4, 3.2, 2.2);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1024, 1024);
+keyLight.shadow.camera.left = -6;
+keyLight.shadow.camera.right = 6;
+keyLight.shadow.camera.top = 6;
+keyLight.shadow.camera.bottom = -6;
+scene.add(keyLight);
+
+const rimLight = new THREE.DirectionalLight(0x9fffb0, 0.5);
+rimLight.position.set(-2, 2.4, -2);
+scene.add(rimLight);
+
+// ---------------------------------------------------------------------------
+// Load VRM (with diagnostics + fallback)
 // ---------------------------------------------------------------------------
 let currentVrm = null;
 let headBone = null;
@@ -475,6 +615,9 @@ let lookAtTarget = null;
 
 const modelRoot = new THREE.Group();
 scene.add(modelRoot);
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
 
 function setModelStatus(text, level) {
   modelStatus.textContent = 'Model: ' + text;
@@ -494,53 +637,124 @@ resetBtn.addEventListener('click', () => {
   [posX, posY, posZ, rotY, scaleSlider].forEach(el => el.dispatchEvent(new Event('input')));
 });
 
-const loader = new GLTFLoader();
-loader.register((parser) => new VRMLoaderPlugin(parser));
+function clearCurrentModel() {
+  if (currentVrm) {
+    modelRoot.remove(currentVrm.scene);
+    VRMUtils.deepDispose(currentVrm.scene);
+    currentVrm = null;
+    headBone = null;
+  }
+}
 
-setModelStatus('loading…', 'warn');
-loader.load(
-  VRM_URL,
-  (gltf) => {
-    const vrm = gltf.userData.vrm;
-    currentVrm = vrm;
+function onVrmLoaded(vrm) {
+  currentVrm = vrm;
 
-    // Face +Z (front) regardless of whether the source is VRM0.x or VRM1.0
-    VRMUtils.rotateVRM0(vrm);
-    VRMUtils.removeUnnecessaryVertices(gltf.scene);
-    VRMUtils.combineSkeletons(gltf.scene);
+  // Face +Z (front) regardless of whether the source is VRM0.x or VRM1.0
+  VRMUtils.rotateVRM0(vrm);
+  VRMUtils.removeUnnecessaryVertices(vrm.scene);
+  VRMUtils.combineSkeletons(vrm.scene);
 
-    vrm.scene.traverse((obj) => {
-      obj.frustumCulled = false;
-      if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
-    });
+  vrm.scene.traverse((obj) => {
+    obj.frustumCulled = false;
+    if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+  });
 
-    modelRoot.add(vrm.scene);
-    applyTransformFromControls();
+  modelRoot.add(vrm.scene);
+  applyTransformFromControls();
 
-    headBone = vrm.humanoid?.getNormalizedBoneNode('head') || null;
+  headBone = vrm.humanoid?.getNormalizedBoneNode('head') || null;
 
-    // A small target object the VRM's eyes/head will look toward during tracking
+  if (!lookAtTarget) {
     lookAtTarget = new THREE.Object3D();
     scene.add(lookAtTarget);
-    lookAtTarget.position.set(0, 1.4, 2.4);
-    if (vrm.lookAt) vrm.lookAt.target = lookAtTarget;
-
-    setModelStatus('loaded', 'ok');
-    loadingOverlay.style.opacity = '0';
-    setTimeout(() => (loadingOverlay.style.display = 'none'), 400);
-  },
-  (progress) => {
-    if (progress.total) {
-      const pct = Math.round((progress.loaded / progress.total) * 100);
-      loadingMsg.textContent = `Loading VRM model… ${pct}%`;
-    }
-  },
-  (error) => {
-    console.error(error);
-    setModelStatus('failed to load', 'err');
-    loadingMsg.textContent = 'Failed to load VRM model. Check console for details.';
   }
-);
+  lookAtTarget.position.set(0, 1.4, 2.4);
+  if (vrm.lookAt) vrm.lookAt.target = lookAtTarget;
+
+  setModelStatus('loaded', 'ok');
+  loadErrorEl.style.display = 'none';
+  retryBtn.style.display = 'none';
+  fallbackBtn.style.display = 'none';
+  loadingOverlay.style.opacity = '0';
+  setTimeout(() => (loadingOverlay.style.display = 'none'), 400);
+}
+
+function describeLoadFailure(url, detail) {
+  return (
+    `Could not load:\n${url}\n\n${detail}\n\n` +
+    `Common causes: the repo/file is private (raw.githubusercontent.com only serves public repos), ` +
+    `the branch or filename is wrong (paths are case-sensitive), or the file is tracked with Git LFS ` +
+    `(raw.githubusercontent.com then serves a small text pointer instead of the actual model — you'd need ` +
+    `to host the real binary elsewhere, e.g. a GitHub Release asset or another static host).`
+  );
+}
+
+async function loadVrmFromUrl(url, { isRetry = false } = {}) {
+  clearCurrentModel();
+  loadingOverlay.style.display = 'flex';
+  loadingOverlay.style.opacity = '1';
+  loadingMsg.textContent = 'Checking model URL…';
+  modelUrlDisplay.textContent = url;
+  setModelStatus('loading…', 'warn');
+  loadErrorEl.style.display = 'none';
+  retryBtn.style.display = 'none';
+  if (!isRetry) fallbackBtn.style.display = 'none';
+
+  let buffer;
+  try {
+    const resp = await fetch(url);
+    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+
+    if (!resp.ok) {
+      throw new Error(`Server responded with HTTP ${resp.status} ${resp.statusText}.`);
+    }
+
+    buffer = await resp.arrayBuffer();
+
+    // Detect an HTML error/login page served instead of binary data
+    if (contentType.includes('text/html') || buffer.byteLength < 4) {
+      throw new Error('The URL returned a webpage instead of a binary file (repo may be private, or the path is wrong).');
+    }
+
+    // Detect a Git LFS pointer file (small plain-text file starting with "version https://git-lfs...")
+    if (buffer.byteLength < 2048) {
+      const text = new TextDecoder().decode(buffer);
+      if (text.includes('git-lfs.github.com')) {
+        throw new Error('This file is tracked with Git LFS — raw.githubusercontent.com is serving the LFS pointer text, not the real .vrm binary.');
+      }
+    }
+  } catch (err) {
+    console.error(err);
+    setModelStatus('failed to load', 'err');
+    loadingMsg.textContent = 'Failed to load VRM model.';
+    loadErrorEl.textContent = describeLoadFailure(url, err.message || String(err));
+    loadErrorEl.style.display = 'block';
+    retryBtn.style.display = 'block';
+    fallbackBtn.style.display = 'block';
+    return;
+  }
+
+  loadingMsg.textContent = 'Parsing VRM model…';
+  gltfLoader.parse(
+    buffer,
+    url,
+    (gltf) => onVrmLoaded(gltf.userData.vrm),
+    (err) => {
+      console.error(err);
+      setModelStatus('failed to load', 'err');
+      loadingMsg.textContent = 'Failed to parse VRM model.';
+      loadErrorEl.textContent = describeLoadFailure(url, (err && err.message) || 'The file was downloaded but is not a valid glTF/VRM binary.');
+      loadErrorEl.style.display = 'block';
+      retryBtn.style.display = 'block';
+      fallbackBtn.style.display = 'block';
+    }
+  );
+}
+
+retryBtn.addEventListener('click', () => loadVrmFromUrl(VRM_URL, { isRetry: true }));
+fallbackBtn.addEventListener('click', () => loadVrmFromUrl(FALLBACK_VRM_URL, { isRetry: true }));
+
+loadVrmFromUrl(VRM_URL);
 
 // ---------------------------------------------------------------------------
 // Webcam-driven face tracking (MediaPipe Face Landmarker)
@@ -549,7 +763,6 @@ let faceLandmarker = null;
 let trackingActive = false;
 let lastVideoTime = -1;
 
-// smoothed target euler angles for the head bone
 const targetEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const smoothedQuat = new THREE.Quaternion();
 const tmpQuat = new THREE.Quaternion();
@@ -620,10 +833,7 @@ function stopCameraTracking() {
   setCamStatus('off');
 }
 
-camBtn.addEventListener('click', () => {
-  if (trackingActive) stopCameraTracking();
-  else startCameraTracking();
-});
+camBtn.addEventListener('click', () => { trackingActive ? stopCameraTracking() : startCameraTracking(); });
 trackToggle.addEventListener('change', () => {
   if (trackToggle.checked && !trackingActive) startCameraTracking();
   else if (!trackToggle.checked && trackingActive) stopCameraTracking();
@@ -645,7 +855,6 @@ function updateFaceTracking() {
   const sensitivity = parseFloat(sensitivitySlider.value);
   const mirror = mirrorToggle.checked;
 
-  // yaw (left/right), pitch (up/down), roll (tilt)
   let yaw = e.y * sensitivity;
   let pitch = e.x * sensitivity;
   let roll = e.z * sensitivity;
@@ -661,13 +870,14 @@ function updateFaceTracking() {
     'YXZ'
   );
 
-  // move the look-at target so the eyes follow the same direction
-  const radius = 2.2;
-  lookAtTarget.position.set(
-    Math.sin(targetEuler.y) * radius,
-    1.4 - Math.sin(targetEuler.x) * 0.8,
-    Math.cos(targetEuler.y) * radius
-  );
+  if (lookAtTarget) {
+    const radius = 2.2;
+    lookAtTarget.position.set(
+      Math.sin(targetEuler.y) * radius,
+      1.4 - Math.sin(targetEuler.x) * 0.8,
+      Math.cos(targetEuler.y) * radius
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +888,7 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
+  const elapsed = clock.getElapsedTime();
 
   updateFaceTracking();
 
@@ -688,6 +899,17 @@ function animate() {
     smoothedQuat.slerp(tmpQuat, THREE.MathUtils.clamp(alpha, 0, 1));
     headBone.quaternion.copy(smoothedQuat);
   }
+
+  // gentle firefly drift + flicker
+  const posAttr = fireflyGeo.attributes.position;
+  for (let i = 0; i < fireflyCount; i++) {
+    const b = fireflyBase[i];
+    posAttr.array[i * 3] = b.x + Math.sin(elapsed * b.speed + b.phase) * 0.4;
+    posAttr.array[i * 3 + 1] = b.y + Math.sin(elapsed * b.speed * 1.7 + b.phase) * 0.3;
+    posAttr.array[i * 3 + 2] = b.z + Math.cos(elapsed * b.speed + b.phase) * 0.4;
+  }
+  posAttr.needsUpdate = true;
+  fireflyMat.opacity = 0.55 + Math.sin(elapsed * 2.0) * 0.25;
 
   if (currentVrm) currentVrm.update(delta);
   controls.update();
