@@ -22,6 +22,17 @@
     transform: scaleX(-1); opacity: 0.85; z-index: 5;
     box-shadow: 0 0 18px rgba(124,255,124,0.35);
   }
+  video#webcam.hidden-cam { display: none; }
+
+  #camPlaceholder {
+    position: absolute; bottom: 14px; right: 14px;
+    width: 180px; height: 135px; border-radius: 10px;
+    border: 2px solid rgba(124,255,124,0.4); z-index: 5;
+    background: rgba(10,20,14,0.82);
+    display: none; align-items: center; justify-content: center;
+    text-align: center; font-size: 11.5px; color: #bdf5bd; padding: 10px;
+  }
+  #camPlaceholder.show { display: flex; }
 
   #hud {
     position: absolute; top: 14px; left: 14px; z-index: 6;
@@ -55,13 +66,6 @@
   }
   #panelToggle:hover { background: rgba(124,255,124,0.2); }
 
-  #camHint {
-    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
-    background: var(--panel-bg); border: 1px solid rgba(124,255,124,0.35);
-    border-radius: 10px; padding: 7px 14px; font-size: 11.5px; color: #bdf5bd;
-    pointer-events: none; opacity: 0.85; white-space: nowrap;
-  }
-
   #loadOverlay {
     position: absolute; inset: 0; z-index: 20;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -89,6 +93,7 @@
 <div id="app">
   <canvas id="three-canvas"></canvas>
   <video id="webcam" autoplay playsinline muted></video>
+  <div id="camPlaceholder">Camera not in use</div>
 
   <button id="panelToggle" title="Hide/show panel">✕</button>
 
@@ -105,7 +110,7 @@
     </div>
   </div>
 
-  <div id="camHint">🖱 Drag: rotate · Right-drag / two-finger: pan · Scroll / pinch: zoom</div>
+
 
   <div id="loadOverlay">
     <div class="spinner"></div>
@@ -159,17 +164,38 @@ const dom = {
   btnMic: document.getElementById("btnMic"),
   btnResetCam: document.getElementById("btnResetCam"),
   webcam: document.getElementById("webcam"),
+  camPlaceholder: document.getElementById("camPlaceholder"),
   hud: document.getElementById("hud"),
   panelToggle: document.getElementById("panelToggle"),
 };
 
-/* Panel show/hide */
+/* Panel show/hide — also shows/hides the camera preview, but never stops
+   the actual camera stream or tracking, which keep running underneath. */
 let panelVisible = true;
+let cameraInUse = false;
+
+function refreshCameraPreview() {
+  if (!panelVisible) {
+    dom.webcam.classList.add("hidden-cam");
+    dom.camPlaceholder.classList.remove("show");
+    return;
+  }
+  if (cameraInUse) {
+    dom.webcam.classList.remove("hidden-cam");
+    dom.camPlaceholder.classList.remove("show");
+  } else {
+    dom.webcam.classList.add("hidden-cam");
+    dom.camPlaceholder.classList.add("show");
+  }
+}
+
 dom.panelToggle.addEventListener("click", () => {
   panelVisible = !panelVisible;
   dom.hud.classList.toggle("collapsed", !panelVisible);
   dom.panelToggle.textContent = panelVisible ? "✕" : "☰";
+  refreshCameraPreview();
 });
+refreshCameraPreview();
 
 function showError(msg) {
   console.error(msg);
@@ -265,6 +291,9 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.screenSpacePanning = true;
+controls.enableRotate = false;
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.minDistance = 0.4;
 controls.maxDistance = 8;
 controls.target.set(0, 1.15, 0);
@@ -556,6 +585,9 @@ async function startCameraTracking() {
     await new Promise((res) => (dom.webcam.onloadedmetadata = res));
     dom.webcam.play();
 
+    cameraInUse = true;
+    refreshCameraPreview();
+
     faceTrackingActive = true;
     handTrackingActive = true;
     dom.face.textContent = "on";
@@ -568,6 +600,8 @@ async function startCameraTracking() {
 
     predictLoop();
   } catch (err) {
+    cameraInUse = false;
+    refreshCameraPreview();
     showError("Camera/tracking init failed: " + err.message + ". You can still use mic-based lip sync as a fallback.");
     dom.btnStart.disabled = false;
     dom.btnStart.textContent = "Enable Camera + Tracking";
@@ -623,12 +657,23 @@ function applyFaceTracking() {
   const smile = Math.max(scores.mouthSmileLeft || 0, scores.mouthSmileRight || 0);
   em.setValue("happy", smile);
 
-  // Lip sync mouth shapes driven directly by real mouth motion
-  em.setValue("aa", scores.jawOpen || 0);
+  // Lip sync mouth shapes driven directly by real mouth motion.
+  // Smiling naturally raises the jawOpen score a little even with a closed
+  // mouth, which made "aa" fire whenever the user smiled. Subtract a portion
+  // of the smile score before it reaches the mouth-open shape so a smile
+  // alone doesn't pop the mouth open.
+  const rawJawOpen = scores.jawOpen || 0;
+  const jawOpen = Math.max(0, rawJawOpen - smile * 0.5);
+  em.setValue("aa", jawOpen);
   em.setValue("ou", Math.max(scores.mouthFunnel || 0, scores.mouthPucker || 0));
   em.setValue("ee", Math.max(scores.mouthStretchLeft || 0, scores.mouthStretchRight || 0) * 0.7);
 
-  // Head rotation from facial transformation matrix
+  // Head rotation from facial transformation matrix.
+  // The webcam preview is mirrored for a natural "look in a mirror" feel,
+  // but the underlying landmark/matrix data from MediaPipe is NOT mirrored
+  // (it's raw camera space). So yaw (turning left/right) and roll (tilting)
+  // need to be flipped to match what the user sees in the mirrored preview;
+  // pitch (nodding up/down) doesn't need flipping either way.
   const matrixData = latestFaceResult.facialTransformationMatrixes;
   if (matrixData && matrixData.length) {
     const m = new THREE.Matrix4().fromArray(matrixData[0].data);
@@ -636,9 +681,9 @@ function applyFaceTracking() {
     const euler = new THREE.Euler().setFromQuaternion(q, "YXZ");
     const head = vrm.humanoid.getNormalizedBoneNode("head");
     if (head) {
-      head.rotation.x = THREE.MathUtils.clamp(-euler.x, -0.5, 0.5);
-      head.rotation.y = THREE.MathUtils.clamp(-euler.y + Math.PI, -0.6, 0.6) - Math.PI;
-      head.rotation.z = THREE.MathUtils.clamp(euler.z, -0.4, 0.4);
+      head.rotation.x = THREE.MathUtils.clamp(euler.x, -0.5, 0.5);
+      head.rotation.y = THREE.MathUtils.clamp(-euler.y, -0.6, 0.6);
+      head.rotation.z = THREE.MathUtils.clamp(-euler.z, -0.4, 0.4);
     }
   }
 
