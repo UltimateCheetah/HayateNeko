@@ -43,6 +43,25 @@
   button:hover { background: rgba(124,255,124,0.25); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  #hud.collapsed { width: auto; padding: 10px 12px; }
+  #hud.collapsed .hud-body { display: none; }
+
+  #panelToggle {
+    position: absolute; top: 14px; right: 14px; z-index: 7;
+    background: var(--panel-bg); border: 1px solid rgba(124,255,124,0.5);
+    color: var(--accent); border-radius: 10px; width: 38px; height: 38px;
+    cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(6px);
+  }
+  #panelToggle:hover { background: rgba(124,255,124,0.2); }
+
+  #camHint {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+    background: var(--panel-bg); border: 1px solid rgba(124,255,124,0.35);
+    border-radius: 10px; padding: 7px 14px; font-size: 11.5px; color: #bdf5bd;
+    pointer-events: none; opacity: 0.85; white-space: nowrap;
+  }
+
   #loadOverlay {
     position: absolute; inset: 0; z-index: 20;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -71,15 +90,22 @@
   <canvas id="three-canvas"></canvas>
   <video id="webcam" autoplay playsinline muted></video>
 
+  <button id="panelToggle" title="Hide/show panel">✕</button>
+
   <div id="hud">
     <h1>HAYATE NEKO // TRACKER</h1>
-    <div class="row"><label><span class="status" id="dotModel"></span>VRM Model</label><span id="txtModel">loading</span></div>
-    <div class="row"><label><span class="status" id="dotFace"></span>Face Tracking</label><span id="txtFace">off</span></div>
-    <div class="row"><label><span class="status" id="dotHands"></span>Hand Tracking</label><span id="txtHands">off</span></div>
-    <div class="row"><label><span class="status" id="dotLip"></span>Lip Sync</label><span id="txtLip">off</span></div>
-    <button id="btnStart">Enable Camera + Tracking</button>
-    <button id="btnMic">Enable Mic Lip Sync (fallback)</button>
+    <div class="hud-body">
+      <div class="row"><label><span class="status" id="dotModel"></span>VRM Model</label><span id="txtModel">loading</span></div>
+      <div class="row"><label><span class="status" id="dotFace"></span>Face Tracking</label><span id="txtFace">off</span></div>
+      <div class="row"><label><span class="status" id="dotHands"></span>Hand Tracking</label><span id="txtHands">off</span></div>
+      <div class="row"><label><span class="status" id="dotLip"></span>Lip Sync</label><span id="txtLip">off</span></div>
+      <button id="btnStart">Enable Camera + Tracking</button>
+      <button id="btnMic">Enable Mic Lip Sync (fallback)</button>
+      <button id="btnResetCam">Reset Camera</button>
+    </div>
   </div>
+
+  <div id="camHint">🖱 Drag: rotate · Right-drag / two-finger: pan · Scroll / pinch: zoom</div>
 
   <div id="loadOverlay">
     <div class="spinner"></div>
@@ -103,6 +129,7 @@
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import {
   FaceLandmarker,
@@ -130,8 +157,19 @@ const dom = {
   errBox: document.getElementById("errBox"),
   btnStart: document.getElementById("btnStart"),
   btnMic: document.getElementById("btnMic"),
+  btnResetCam: document.getElementById("btnResetCam"),
   webcam: document.getElementById("webcam"),
+  hud: document.getElementById("hud"),
+  panelToggle: document.getElementById("panelToggle"),
 };
+
+/* Panel show/hide */
+let panelVisible = true;
+dom.panelToggle.addEventListener("click", () => {
+  panelVisible = !panelVisible;
+  dom.hud.classList.toggle("collapsed", !panelVisible);
+  dom.panelToggle.textContent = panelVisible ? "✕" : "☰";
+});
 
 function showError(msg) {
   console.error(msg);
@@ -151,8 +189,66 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x0d2414, 0.028);
-scene.background = new THREE.Color(0x0a1f10);
+scene.fog = new THREE.FogExp2(0x8fd6a8, 0.02);
+
+/* ---- Anime-style gradient sky dome (bright, saturated, painterly) ---- */
+function makeSkyGradientTexture() {
+  const c = document.createElement("canvas");
+  c.width = 2; c.height = 256;
+  const ctx = c.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.0, "#8fd8ff");   // bright anime sky blue
+  grad.addColorStop(0.35, "#bdeaba");  // soft green-yellow haze
+  grad.addColorStop(0.62, "#eaffb0");  // warm sunlit horizon
+  grad.addColorStop(0.8, "#bfe98a");
+  grad.addColorStop(1.0, "#4f9c4a");   // canopy green at ground line
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const skyGeo = new THREE.SphereGeometry(50, 32, 16);
+const skyMat = new THREE.MeshBasicMaterial({ map: makeSkyGradientTexture(), side: THREE.BackSide, fog: false });
+const skyDome = new THREE.Mesh(skyGeo, skyMat);
+scene.add(skyDome);
+
+/* ---- Toon shading gradient map for anime cel-shaded look ---- */
+function makeToonGradientMap() {
+  const c = document.createElement("canvas");
+  c.width = 4; c.height = 1;
+  const ctx = c.getContext("2d");
+  const shades = [70, 140, 200, 255];
+  shades.forEach((v, i) => {
+    ctx.fillStyle = `rgb(${v},${v},${v})`;
+    ctx.fillRect(i, 0, 1, 1);
+  });
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  return tex;
+}
+const toonGradientMap = makeToonGradientMap();
+
+/* ---- Sun with soft glow ---- */
+function makeGlowSprite(color, size, opacity) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, color);
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity, depthWrite: false, fog: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(size, size, 1);
+  return sprite;
+}
+const sun = makeGlowSprite("rgba(255,250,210,1)", 14, 0.9);
+sun.position.set(-8, 14, -20);
+scene.add(sun);
 
 const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.set(0, 1.35, 2.4);
@@ -164,25 +260,43 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-/* Lighting */
-const hemi = new THREE.HemisphereLight(0xbfffd0, 0x0a1c0e, 1.15);
+/* Camera controls: left-drag rotate, right-drag/two-finger pan, scroll/pinch zoom */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = true;
+controls.minDistance = 0.4;
+controls.maxDistance = 8;
+controls.target.set(0, 1.15, 0);
+controls.update();
+
+const DEFAULT_CAM_POS = camera.position.clone();
+const DEFAULT_CAM_TARGET = controls.target.clone();
+dom.btnResetCam.addEventListener("click", () => {
+  camera.position.copy(DEFAULT_CAM_POS);
+  controls.target.copy(DEFAULT_CAM_TARGET);
+  controls.update();
+});
+
+/* Lighting - bright, saturated, anime-daylight look */
+const hemi = new THREE.HemisphereLight(0xdfffe8, 0x3a7a3f, 1.3);
 scene.add(hemi);
 
-const sunLight = new THREE.DirectionalLight(0xdfffe0, 1.4);
-sunLight.position.set(3, 6, 2);
+const sunLight = new THREE.DirectionalLight(0xfff6d8, 1.6);
+sunLight.position.set(-4, 8, -6);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(1024, 1024);
 sunLight.shadow.camera.near = 1;
 sunLight.shadow.camera.far = 20;
 scene.add(sunLight);
 
-const rimLight = new THREE.PointLight(0x8affc1, 0.6, 10);
+const rimLight = new THREE.PointLight(0x9affc9, 0.5, 10);
 rimLight.position.set(-2, 2, -2);
 scene.add(rimLight);
 
 /* Ground */
 const groundGeo = new THREE.CircleGeometry(14, 48);
-const groundMat = new THREE.MeshStandardMaterial({ color: 0x264d1e, roughness: 1 });
+const groundMat = new THREE.MeshToonMaterial({ color: 0x4fae4a, gradientMap: toonGradientMap });
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
@@ -192,21 +306,26 @@ scene.add(ground);
 const jungleGroup = new THREE.Group();
 scene.add(jungleGroup);
 
+const swayingLeaves = [];
+
 function makeTree(x, z, scale) {
   const g = new THREE.Group();
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.95 });
+  const trunkMat = new THREE.MeshToonMaterial({ color: 0x6b4a2c, gradientMap: toonGradientMap });
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 3.2 * scale, 7), trunkMat);
   trunk.position.y = 1.6 * scale;
   trunk.castShadow = true;
   g.add(trunk);
 
-  const leafColors = [0x1f6b2e, 0x2c8a3d, 0x14522a];
+  const leafColors = [0x3fae3f, 0x59c25a, 0x2f8a3a];
   for (let i = 0; i < 3; i++) {
-    const leafMat = new THREE.MeshStandardMaterial({ color: leafColors[i % leafColors.length], roughness: 0.85 });
+    const leafMat = new THREE.MeshToonMaterial({ color: leafColors[i % leafColors.length], gradientMap: toonGradientMap });
     const leaf = new THREE.Mesh(new THREE.ConeGeometry((1.1 - i * 0.2) * scale, 1.5 * scale, 8), leafMat);
     leaf.position.y = (3.0 + i * 0.75) * scale;
     leaf.castShadow = true;
+    leaf.userData.swayPhase = Math.random() * Math.PI * 2;
+    leaf.userData.swayAmount = 0.03 + Math.random() * 0.03;
     g.add(leaf);
+    swayingLeaves.push(leaf);
   }
   g.position.set(x, 0, z);
   return g;
@@ -220,7 +339,7 @@ const treePositions = [
 treePositions.forEach(([x, z, s]) => jungleGroup.add(makeTree(x, z, s)));
 
 /* Ferns */
-const fernMat = new THREE.MeshStandardMaterial({ color: 0x2f7a34, roughness: 0.9, side: THREE.DoubleSide });
+const fernMat = new THREE.MeshToonMaterial({ color: 0x3f9a44, gradientMap: toonGradientMap, side: THREE.DoubleSide });
 for (let i = 0; i < 40; i++) {
   const angle = Math.random() * Math.PI * 2;
   const radius = 2.6 + Math.random() * 4.5;
@@ -257,6 +376,41 @@ for (let i = 0; i < 5; i++) {
   scene.add(shaft);
 }
 
+/* Drifting anime-style puffy clouds (flat sprites, painterly soft edges) */
+function makeCloudTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const ctx = c.getContext("2d");
+  const puffs = [
+    [128, 150, 70], [80, 160, 50], [176, 160, 50],
+    [105, 120, 55], [150, 120, 55], [128, 100, 60]
+  ];
+  puffs.forEach(([x, y, r]) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "rgba(255,255,255,0.95)");
+    g.addColorStop(0.7, "rgba(255,255,255,0.55)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+const cloudTex = makeCloudTexture();
+const clouds = [];
+for (let i = 0; i < 7; i++) {
+  const mat = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.75, depthWrite: false, fog: false });
+  const cloud = new THREE.Sprite(mat);
+  const s = 5 + Math.random() * 5;
+  cloud.scale.set(s * 1.6, s, 1);
+  cloud.position.set((Math.random() - 0.5) * 40, 9 + Math.random() * 5, -18 - Math.random() * 12);
+  cloud.userData.speed = 0.15 + Math.random() * 0.25;
+  clouds.push(cloud);
+  scene.add(cloud);
+}
+
 /* ---------------------------------------------------------
    VRM LOADING
 --------------------------------------------------------- */
@@ -289,9 +443,13 @@ loader.load(
     vrm = loadedVrm;
     scene.add(vrm.scene);
 
-    // Face model forward -1z convention fix (three-vrm auto-rotates for VRM0),
-    // just make sure it's facing the camera:
-    vrm.scene.rotation.y = Math.PI;
+    // Correct forward-facing direction. VRM 0.x models are authored facing +Z,
+    // three-vrm's own rotateVRM0 helper flips them to the VRM 1.0 -Z forward
+    // convention that the rest of this scene (camera, lookAt) expects.
+    // VRM 1.0 models already face the right way and need no extra rotation.
+    if (vrm.meta?.metaVersion === "0") {
+      VRMUtils.rotateVRM0(vrm);
+    }
 
     // Frame camera roughly to head height if humanoid present
     try {
@@ -300,7 +458,10 @@ loader.load(
         const headPos = new THREE.Vector3();
         head.getWorldPosition(headPos);
         camera.position.set(0, headPos.y + 0.15, 1.1);
-        camera.lookAt(0, headPos.y, 0);
+        controls.target.set(0, headPos.y, 0);
+        controls.update();
+        DEFAULT_CAM_POS.copy(camera.position);
+        DEFAULT_CAM_TARGET.copy(controls.target);
       }
     } catch (e) { /* non-fatal */ }
 
@@ -619,8 +780,19 @@ function animate() {
     f.material.opacity = 0.6 + Math.sin(t * 3 + f.userData.phase) * 0.4;
   });
 
+  swayingLeaves.forEach((leaf) => {
+    leaf.rotation.z = Math.sin(t * 0.8 + leaf.userData.swayPhase) * leaf.userData.swayAmount;
+    leaf.rotation.x = Math.cos(t * 0.6 + leaf.userData.swayPhase) * leaf.userData.swayAmount * 0.6;
+  });
+
+  clouds.forEach((cloud) => {
+    cloud.position.x += cloud.userData.speed * dt;
+    if (cloud.position.x > 25) cloud.position.x = -25;
+  });
+
   if (vrm) vrm.update(dt);
 
+  controls.update();
   renderer.render(scene, camera);
 }
 animate();
