@@ -10,7 +10,7 @@ const { FaceLandmarker, HandLandmarker, FilesetResolver } = window.vision;
 // VRM, but this raw.githubusercontent URL always works out of the box.
 // ---------------------------------------------------------------------------
 const DEFAULT_VRM_URL =
-  'https://raw.githubusercontent.com/pixiv/three-vrm/dev/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
+  'https://raw.githubusercontent.com/UltimateCheetah/HayateNeko/main/Hayate%Neko.vrm';
 
 // ---------------------------------------------------------------------------
 // Renderer / scene / camera
