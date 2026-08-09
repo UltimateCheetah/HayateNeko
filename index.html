@@ -102,7 +102,7 @@
     <div class="hud-body">
       <div class="row"><label><span class="status" id="dotModel"></span>VRM Model</label><span id="txtModel">loading</span></div>
       <div class="row"><label><span class="status" id="dotFace"></span>Face Tracking</label><span id="txtFace">off</span></div>
-      <div class="row"><label><span class="status" id="dotHands"></span>Hand Tracking</label><span id="txtHands">off</span></div>
+      <div class="row"><label><span class="status on" id="dotHandPose"></span>Hand Pose</label><span id="txtHandPose">idle (sides)</span></div>
       <div class="row"><label><span class="status" id="dotLip"></span>Lip Sync</label><span id="txtLip">off</span></div>
       <button id="btnStart">Enable Camera + Tracking</button>
       <button id="btnMic">Enable Mic Lip Sync (fallback)</button>
@@ -138,23 +138,54 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import {
   FaceLandmarker,
-  HandLandmarker,
   FilesetResolver
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 /* ---------------------------------------------------------
-   CONFIG
+   CONFIG / DEVICE PROFILE
+   Mobile gets a lighter scene + throttled tracking so the
+   frame rate stays smooth; nothing is removed, just scaled.
 --------------------------------------------------------- */
 const VRM_URL = "https://raw.githubusercontent.com/UltimateCheetah/HayateNeko/main/Hayate%20Neko.vrm";
+
+const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 820;
+
+const QUALITY = isMobile
+  ? {
+      pixelRatioCap: 1,
+      shadows: false,
+      shadowMapSize: 512,
+      skySegments: [16, 8],
+      groundSegments: 24,
+      fernCount: 16,
+      fireflyCount: 10,
+      lightShafts: 2,
+      cloudCount: 3,
+      camWidth: 320,
+      camHeight: 240,
+      trackFps: 18,      // throttle mediapipe inference rate
+    }
+  : {
+      pixelRatioCap: 2,
+      shadows: true,
+      shadowMapSize: 1024,
+      skySegments: [32, 16],
+      groundSegments: 48,
+      fernCount: 40,
+      fireflyCount: 26,
+      lightShafts: 5,
+      cloudCount: 7,
+      camWidth: 640,
+      camHeight: 480,
+      trackFps: 30,
+    };
 
 const dom = {
   model: document.getElementById("txtModel"),
   face: document.getElementById("txtFace"),
-  hands: document.getElementById("txtHands"),
   lip: document.getElementById("txtLip"),
   dotModel: document.getElementById("dotModel"),
   dotFace: document.getElementById("dotFace"),
-  dotHands: document.getElementById("dotHands"),
   dotLip: document.getElementById("dotLip"),
   loadOverlay: document.getElementById("loadOverlay"),
   loadText: document.getElementById("loadText"),
@@ -207,11 +238,11 @@ function showError(msg) {
    THREE.JS SCENE
 --------------------------------------------------------- */
 const canvas = document.getElementById("three-canvas");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: false, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.pixelRatioCap));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = QUALITY.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
@@ -234,7 +265,7 @@ function makeSkyGradientTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
-const skyGeo = new THREE.SphereGeometry(50, 32, 16);
+const skyGeo = new THREE.SphereGeometry(50, QUALITY.skySegments[0], QUALITY.skySegments[1]);
 const skyMat = new THREE.MeshBasicMaterial({ map: makeSkyGradientTexture(), side: THREE.BackSide, fog: false });
 const skyDome = new THREE.Mesh(skyGeo, skyMat);
 scene.add(skyDome);
@@ -313,8 +344,8 @@ scene.add(hemi);
 
 const sunLight = new THREE.DirectionalLight(0xfff6d8, 1.6);
 sunLight.position.set(-4, 8, -6);
-sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(1024, 1024);
+sunLight.castShadow = QUALITY.shadows;
+sunLight.shadow.mapSize.set(QUALITY.shadowMapSize, QUALITY.shadowMapSize);
 sunLight.shadow.camera.near = 1;
 sunLight.shadow.camera.far = 20;
 scene.add(sunLight);
@@ -324,11 +355,11 @@ rimLight.position.set(-2, 2, -2);
 scene.add(rimLight);
 
 /* Ground */
-const groundGeo = new THREE.CircleGeometry(14, 48);
+const groundGeo = new THREE.CircleGeometry(14, QUALITY.groundSegments);
 const groundMat = new THREE.MeshToonMaterial({ color: 0x4fae4a, gradientMap: toonGradientMap });
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
+ground.receiveShadow = QUALITY.shadows;
 scene.add(ground);
 
 /* Procedural jungle: trunks, canopies, ferns, fireflies */
@@ -342,7 +373,7 @@ function makeTree(x, z, scale) {
   const trunkMat = new THREE.MeshToonMaterial({ color: 0x6b4a2c, gradientMap: toonGradientMap });
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 3.2 * scale, 7), trunkMat);
   trunk.position.y = 1.6 * scale;
-  trunk.castShadow = true;
+  trunk.castShadow = QUALITY.shadows;
   g.add(trunk);
 
   const leafColors = [0x3fae3f, 0x59c25a, 0x2f8a3a];
@@ -350,7 +381,7 @@ function makeTree(x, z, scale) {
     const leafMat = new THREE.MeshToonMaterial({ color: leafColors[i % leafColors.length], gradientMap: toonGradientMap });
     const leaf = new THREE.Mesh(new THREE.ConeGeometry((1.1 - i * 0.2) * scale, 1.5 * scale, 8), leafMat);
     leaf.position.y = (3.0 + i * 0.75) * scale;
-    leaf.castShadow = true;
+    leaf.castShadow = QUALITY.shadows;
     leaf.userData.swayPhase = Math.random() * Math.PI * 2;
     leaf.userData.swayAmount = 0.03 + Math.random() * 0.03;
     g.add(leaf);
@@ -369,7 +400,7 @@ treePositions.forEach(([x, z, s]) => jungleGroup.add(makeTree(x, z, s)));
 
 /* Ferns */
 const fernMat = new THREE.MeshToonMaterial({ color: 0x3f9a44, gradientMap: toonGradientMap, side: THREE.DoubleSide });
-for (let i = 0; i < 40; i++) {
+for (let i = 0; i < QUALITY.fernCount; i++) {
   const angle = Math.random() * Math.PI * 2;
   const radius = 2.6 + Math.random() * 4.5;
   const x = Math.cos(angle) * radius;
@@ -378,7 +409,7 @@ for (let i = 0; i < 40; i++) {
   fern.position.set(x, 0.35, z);
   fern.rotation.y = Math.random() * Math.PI;
   fern.rotation.z = (Math.random() - 0.5) * 0.4;
-  fern.castShadow = true;
+  fern.castShadow = QUALITY.shadows;
   jungleGroup.add(fern);
 }
 
@@ -386,7 +417,7 @@ for (let i = 0; i < 40; i++) {
 const fireflyGeo = new THREE.SphereGeometry(0.025, 6, 6);
 const fireflyMat = new THREE.MeshBasicMaterial({ color: 0xbfff8a });
 const fireflies = [];
-for (let i = 0; i < 26; i++) {
+for (let i = 0; i < QUALITY.fireflyCount; i++) {
   const f = new THREE.Mesh(fireflyGeo, fireflyMat);
   f.position.set((Math.random() - 0.5) * 6, 0.6 + Math.random() * 2, (Math.random() - 0.7) * 6);
   f.userData.phase = Math.random() * Math.PI * 2;
@@ -397,7 +428,7 @@ for (let i = 0; i < 26; i++) {
 
 /* Volumetric-ish light shafts (simple planes) */
 const shaftMat = new THREE.MeshBasicMaterial({ color: 0xdfffcf, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false });
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < QUALITY.lightShafts; i++) {
   const shaft = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 8), shaftMat);
   shaft.position.set(-4 + i * 2, 3, -3 - Math.random() * 3);
   shaft.rotation.y = Math.random() * 0.3;
@@ -429,7 +460,7 @@ function makeCloudTexture() {
 }
 const cloudTex = makeCloudTexture();
 const clouds = [];
-for (let i = 0; i < 7; i++) {
+for (let i = 0; i < QUALITY.cloudCount; i++) {
   const mat = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.75, depthWrite: false, fog: false });
   const cloud = new THREE.Sprite(mat);
   const s = 5 + Math.random() * 5;
@@ -445,6 +476,31 @@ for (let i = 0; i < 7; i++) {
 --------------------------------------------------------- */
 let vrm = null;
 let clock = new THREE.Clock();
+
+/* Cached bone references, filled in once the VRM loads instead of calling
+   getNormalizedBoneNode() every frame — the main per-frame cost cut for
+   smoother playback, especially on mobile. */
+const bones = {};
+function cacheBones() {
+  if (!vrm?.humanoid) return;
+  const names = [
+    "head", "chest", "spine",
+    "leftUpperArm", "leftLowerArm", "leftHand",
+    "rightUpperArm", "rightLowerArm", "rightHand",
+  ];
+  names.forEach((n) => { bones[n] = vrm.humanoid.getNormalizedBoneNode(n); });
+
+  // Relaxed fingers (proximal joint of each finger, both hands) for a
+  // natural resting hand instead of a flat open palm.
+  bones.fingers = [];
+  const fingerNames = ["Thumb", "Index", "Middle", "Ring", "Little"];
+  ["left", "right"].forEach((side) => {
+    fingerNames.forEach((finger) => {
+      const bone = vrm.humanoid.getNormalizedBoneNode(`${side}${finger}Proximal`);
+      if (bone) bones.fingers.push({ bone, side });
+    });
+  });
+}
 
 const loader = new GLTFLoader();
 loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -466,7 +522,7 @@ loader.load(
     VRMUtils.removeUnnecessaryJoints(gltf.scene);
     loadedVrm.scene.traverse((obj) => {
       obj.frustumCulled = false;
-      if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+      if (obj.isMesh) { obj.castShadow = QUALITY.shadows; obj.receiveShadow = QUALITY.shadows; }
     });
 
     vrm = loadedVrm;
@@ -480,9 +536,11 @@ loader.load(
       VRMUtils.rotateVRM0(vrm);
     }
 
+    cacheBones();
+
     // Frame camera roughly to head height if humanoid present
     try {
-      const head = vrm.humanoid?.getNormalizedBoneNode("head");
+      const head = bones.head;
       if (head) {
         const headPos = new THREE.Vector3();
         head.getWorldPosition(headPos);
@@ -521,9 +579,7 @@ loader.load(
 --------------------------------------------------------- */
 function applyIdle(t) {
   if (!vrm || !vrm.humanoid) return;
-  const chest = vrm.humanoid.getNormalizedBoneNode("chest");
-  const head = vrm.humanoid.getNormalizedBoneNode("head");
-  const spine = vrm.humanoid.getNormalizedBoneNode("spine");
+  const { chest, head, spine } = bones;
   if (chest) chest.rotation.x = Math.sin(t * 1.2) * 0.015;
   if (spine) spine.rotation.z = Math.sin(t * 0.6) * 0.01;
   if (head && !faceTrackingActive) {
@@ -533,52 +589,84 @@ function applyIdle(t) {
 }
 
 /* ---------------------------------------------------------
-   MEDIAPIPE: FACE + HAND TRACKING
+   HANDS-TO-SIDE POSE (replaces live hand tracking)
+   Rotates the arms down from the VRM's T-pose bind pose into a relaxed,
+   natural "hands resting at the sides" stance, with a very subtle
+   breathing-linked sway so it doesn't look frozen. Always active once
+   the model is loaded — it no longer depends on the camera.
+--------------------------------------------------------- */
+const ARM_DOWN_Z = THREE.MathUtils.degToRad(-72);   // bring T-pose arm down to the side
+const ELBOW_BEND_Y = THREE.MathUtils.degToRad(6);  // slight natural forward bend
+const FINGER_RELAX_Z = -0.7;                       // gentle relaxed finger curl
+
+function applyHandsToSidePose(t) {
+  if (!vrm || !vrm.humanoid) return;
+  const sway = Math.sin(t * 1.1) * 0.01;
+  const swayOffset = Math.sin(t * 1.1 + Math.PI) * 0.01; // opposite phase, feels less robotic
+
+  if (bones.leftUpperArm) bones.leftUpperArm.rotation.z = ARM_DOWN_Z + sway;
+  if (bones.rightUpperArm) bones.rightUpperArm.rotation.z = -(ARM_DOWN_Z + swayOffset);
+
+  if (bones.leftLowerArm) bones.leftLowerArm.rotation.y = ELBOW_BEND_Y;
+  if (bones.rightLowerArm) bones.rightLowerArm.rotation.y = -ELBOW_BEND_Y;
+
+  if (bones.fingers) {
+    bones.fingers.forEach(({ bone, side }) => {
+      bone.rotation.z = side === "right" ? -FINGER_RELAX_Z : FINGER_RELAX_Z;
+    });
+  }
+}
+
+/* ---------------------------------------------------------
+   MEDIAPIPE: FACE TRACKING
 --------------------------------------------------------- */
 let faceLandmarker = null;
-let handLandmarker = null;
 let faceTrackingActive = false;
-let handTrackingActive = false;
 let lastVideoTime = -1;
 let latestFaceResult = null;
-let latestHandResult = null;
+let lastTrackTime = 0;
+const trackIntervalMs = 1000 / QUALITY.trackFps;
 
 async function initMediaPipe() {
   const filesetResolver = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
   );
 
-  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-      delegate: "GPU"
-    },
-    outputFaceBlendshapes: true,
-    outputFacialTransformationMatrixes: true,
-    runningMode: "VIDEO",
-    numFaces: 1
-  });
+  const baseOpts = {
+    modelAssetPath:
+      "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+  };
 
-  handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-      delegate: "GPU"
-    },
-    runningMode: "VIDEO",
-    numHands: 2
-  });
+  try {
+    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { ...baseOpts, delegate: "GPU" },
+      outputFaceBlendshapes: true,
+      outputFacialTransformationMatrixes: true,
+      runningMode: "VIDEO",
+      numFaces: 1
+    });
+  } catch (e) {
+    // Some mobile browsers lack a working WebGL delegate for tasks-vision,
+    // which either throws here or causes heavy per-frame lag. Fall back to CPU.
+    console.warn("GPU delegate unavailable, falling back to CPU:", e);
+    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { ...baseOpts, delegate: "CPU" },
+      outputFaceBlendshapes: true,
+      outputFacialTransformationMatrixes: true,
+      runningMode: "VIDEO",
+      numFaces: 1
+    });
+  }
 }
 
 async function startCameraTracking() {
   dom.btnStart.disabled = true;
   dom.btnStart.textContent = "Starting...";
   try {
-    if (!faceLandmarker || !handLandmarker) await initMediaPipe();
+    if (!faceLandmarker) await initMediaPipe();
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: "user" },
+      video: { width: QUALITY.camWidth, height: QUALITY.camHeight, facingMode: "user" },
       audio: false
     });
     dom.webcam.srcObject = stream;
@@ -589,11 +677,8 @@ async function startCameraTracking() {
     refreshCameraPreview();
 
     faceTrackingActive = true;
-    handTrackingActive = true;
     dom.face.textContent = "on";
-    dom.hands.textContent = "on";
     dom.dotFace.classList.add("on");
-    dom.dotHands.classList.add("on");
     dom.lip.textContent = "on (face blendshapes)";
     dom.dotLip.classList.add("on");
     dom.btnStart.textContent = "Tracking Active";
@@ -611,31 +696,37 @@ async function startCameraTracking() {
 function predictLoop() {
   if (!faceTrackingActive) return;
   const nowMs = performance.now();
-  if (dom.webcam.currentTime !== lastVideoTime && dom.webcam.readyState >= 2) {
-    lastVideoTime = dom.webcam.currentTime;
-    try {
-      latestFaceResult = faceLandmarker.detectForVideo(dom.webcam, nowMs);
-      latestHandResult = handLandmarker.detectForVideo(dom.webcam, nowMs);
-    } catch (e) {
-      console.warn("Tracking frame skipped:", e);
+  // Throttle inference to QUALITY.trackFps instead of every rAF tick —
+  // this is the single biggest lag source on mobile, since the model
+  // is much heavier than the render itself.
+  if (nowMs - lastTrackTime >= trackIntervalMs) {
+    lastTrackTime = nowMs;
+    if (dom.webcam.currentTime !== lastVideoTime && dom.webcam.readyState >= 2) {
+      lastVideoTime = dom.webcam.currentTime;
+      try {
+        latestFaceResult = faceLandmarker.detectForVideo(dom.webcam, nowMs);
+      } catch (e) {
+        console.warn("Tracking frame skipped:", e);
+      }
     }
   }
   requestAnimationFrame(predictLoop);
 }
 
-/* Map MediaPipe blendshape categories -> VRM expression names */
-const BLENDSHAPE_MAP = {
-  eyeBlinkLeft: "blinkLeft",
-  eyeBlinkRight: "blinkRight",
-  mouthSmileLeft: "happy",
-  mouthSmileRight: "happy",
-  browInnerUp: "surprised",
-  jawOpen: "aa",
-  mouthFunnel: "ou",
-  mouthPucker: "ou",
-  mouthStretchLeft: "ee",
-  mouthStretchRight: "ee",
-};
+/* Small deadzone + rescale so residual/noisy blendshape scores near zero
+   never register as a mouth movement — a closed mouth should always read
+   as fully closed instead of drifting open. */
+function applyDeadzone(value, deadzone) {
+  if (value <= deadzone) return 0;
+  return (value - deadzone) / (1 - deadzone);
+}
+
+// Simple smoothing so mouth shapes don't flicker frame to frame.
+const mouthSmooth = { aa: 0, ou: 0, ee: 0 };
+function smooth(key, target, rate = 0.35) {
+  mouthSmooth[key] += (target - mouthSmooth[key]) * rate;
+  return mouthSmooth[key];
+}
 
 function applyFaceTracking() {
   if (!vrm || !latestFaceResult || !latestFaceResult.faceBlendshapes?.length) return;
@@ -657,16 +748,21 @@ function applyFaceTracking() {
   const smile = Math.max(scores.mouthSmileLeft || 0, scores.mouthSmileRight || 0);
   em.setValue("happy", smile);
 
-  // Lip sync mouth shapes driven directly by real mouth motion.
-  // Smiling naturally raises the jawOpen score a little even with a closed
-  // mouth, which made "aa" fire whenever the user smiled. Subtract a portion
-  // of the smile score before it reaches the mouth-open shape so a smile
-  // alone doesn't pop the mouth open.
+  // Mouth open ("aa"): jawOpen naturally carries some baseline noise, and
+  // smiling raises it further even with the mouth fully closed. We cancel
+  // out a portion attributable to the smile, then apply a deadzone so any
+  // small leftover value below the threshold is treated as "closed" —
+  // the mouth only opens once real jaw movement pushes past that floor.
   const rawJawOpen = scores.jawOpen || 0;
-  const jawOpen = Math.max(0, rawJawOpen - smile * 0.5);
-  em.setValue("aa", jawOpen);
-  em.setValue("ou", Math.max(scores.mouthFunnel || 0, scores.mouthPucker || 0));
-  em.setValue("ee", Math.max(scores.mouthStretchLeft || 0, scores.mouthStretchRight || 0) * 0.7);
+  const smileCompensated = Math.max(0, rawJawOpen - smile * 0.6);
+  const jawOpen = applyDeadzone(smileCompensated, 0.12);
+  em.setValue("aa", smooth("aa", jawOpen));
+
+  const ouRaw = applyDeadzone(Math.max(scores.mouthFunnel || 0, scores.mouthPucker || 0), 0.08);
+  em.setValue("ou", smooth("ou", ouRaw));
+
+  const eeRaw = applyDeadzone(Math.max(scores.mouthStretchLeft || 0, scores.mouthStretchRight || 0), 0.08) * 0.7;
+  em.setValue("ee", smooth("ee", eeRaw));
 
   // Head rotation from facial transformation matrix.
   // The webcam preview is mirrored for a natural "look in a mirror" feel,
@@ -675,16 +771,13 @@ function applyFaceTracking() {
   // need to be flipped to match what the user sees in the mirrored preview;
   // pitch (nodding up/down) doesn't need flipping either way.
   const matrixData = latestFaceResult.facialTransformationMatrixes;
-  if (matrixData && matrixData.length) {
+  if (matrixData && matrixData.length && bones.head) {
     const m = new THREE.Matrix4().fromArray(matrixData[0].data);
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
     const euler = new THREE.Euler().setFromQuaternion(q, "YXZ");
-    const head = vrm.humanoid.getNormalizedBoneNode("head");
-    if (head) {
-      head.rotation.x = THREE.MathUtils.clamp(euler.x, -0.5, 0.5);
-      head.rotation.y = THREE.MathUtils.clamp(-euler.y, -0.6, 0.6);
-      head.rotation.z = THREE.MathUtils.clamp(-euler.z, -0.4, 0.4);
-    }
+    bones.head.rotation.x = THREE.MathUtils.clamp(euler.x, -0.5, 0.5);
+    bones.head.rotation.y = THREE.MathUtils.clamp(-euler.y, -0.6, 0.6);
+    bones.head.rotation.z = THREE.MathUtils.clamp(-euler.z, -0.4, 0.4);
   }
 
   // Eye look-at (simple, based on iris landmarks 468-477 if present)
@@ -700,66 +793,6 @@ function applyFaceTracking() {
         : null;
     }
   }
-}
-
-/* Map hand landmarks -> VRM finger/arm bones (simplified rig, index-finger-driven arm reach) */
-const HAND_BONE_NAMES = {
-  wrist: "rightHand",
-  thumb: ["rightThumbProximal", "rightThumbIntermediate", "rightThumbDistal"],
-  index: ["rightIndexProximal", "rightIndexIntermediate", "rightIndexDistal"],
-  middle: ["rightMiddleProximal", "rightMiddleIntermediate", "rightMiddleDistal"],
-  ring: ["rightRingProximal", "rightRingIntermediate", "rightRingDistal"],
-  little: ["rightLittleProximal", "rightLittleIntermediate", "rightLittleDistal"],
-};
-
-function curlFromLandmarks(lm, baseIdx, midIdx, tipIdx) {
-  const a = new THREE.Vector3(lm[baseIdx].x, -lm[baseIdx].y, -lm[baseIdx].z);
-  const b = new THREE.Vector3(lm[midIdx].x, -lm[midIdx].y, -lm[midIdx].z);
-  const c = new THREE.Vector3(lm[tipIdx].x, -lm[tipIdx].y, -lm[tipIdx].z);
-  const v1 = a.clone().sub(b).normalize();
-  const v2 = c.clone().sub(b).normalize();
-  const angle = v1.angleTo(v2);
-  return THREE.MathUtils.clamp((Math.PI - angle) / Math.PI, 0, 1);
-}
-
-function applyHandTracking() {
-  if (!vrm || !vrm.humanoid || !latestHandResult || !latestHandResult.landmarks?.length) return;
-
-  latestHandResult.landmarks.forEach((lm, i) => {
-    const handednessInfo = latestHandResult.handedness[i]?.[0]?.categoryName; // "Left"/"Right" (mirrored via webcam)
-    const side = handednessInfo === "Left" ? "right" : "left"; // mirror correction for selfie view
-
-    const fingers = {
-      thumb: [1, 2, 4],
-      index: [5, 6, 8],
-      middle: [9, 10, 12],
-      ring: [13, 14, 16],
-      little: [17, 18, 20],
-    };
-
-    for (const [finger, [baseIdx, midIdx, tipIdx]] of Object.entries(fingers)) {
-      const curl = curlFromLandmarks(lm, baseIdx, midIdx, tipIdx);
-      const boneNames = [
-        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Proximal`,
-        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Intermediate`,
-        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Distal`,
-      ];
-      boneNames.forEach((name) => {
-        const bone = vrm.humanoid.getNormalizedBoneNode(name);
-        if (bone) bone.rotation.z = side === "right" ? -curl * 1.2 : curl * 1.2;
-      });
-    }
-
-    // Wrist-driven lower arm rotation (rough reach approximation)
-    const wrist = lm[0];
-    const lowerArm = vrm.humanoid.getNormalizedBoneNode(`${side}LowerArm`);
-    if (lowerArm) {
-      lowerArm.rotation.z = side === "right"
-        ? THREE.MathUtils.clamp((0.5 - wrist.y) * 1.5, -0.3, 1.2)
-        : -THREE.MathUtils.clamp((0.5 - wrist.y) * 1.5, -0.3, 1.2);
-      lowerArm.rotation.y = THREE.MathUtils.clamp((wrist.x - 0.5) * 1.2, -0.6, 0.6);
-    }
-  });
 }
 
 /* ---------------------------------------------------------
@@ -795,7 +828,9 @@ function applyMicLipSync() {
   let sum = 0;
   for (let i = 0; i < micDataArray.length; i++) sum += micDataArray[i];
   const avg = sum / micDataArray.length;
-  const openAmount = THREE.MathUtils.clamp((avg - 8) / 60, 0, 1);
+  // Same deadzone treatment as face-driven "aa" so background noise
+  // doesn't crack the mouth open when nothing is actually being said.
+  const openAmount = applyDeadzone(THREE.MathUtils.clamp((avg - 8) / 60, 0, 1), 0.1);
   const em = vrm.expressionManager;
   if (em) em.setValue("aa", openAmount);
 }
@@ -815,8 +850,8 @@ function animate() {
   const t = clock.elapsedTime;
 
   applyIdle(t);
+  applyHandsToSidePose(t);
   if (faceTrackingActive) applyFaceTracking();
-  if (handTrackingActive) applyHandTracking();
   applyMicLipSync();
 
   fireflies.forEach((f) => {
