@@ -1,1 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jungle VRM Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 
+  <canvas id="scene-canvas"></canvas>
+
+  <!-- hidden webcam feed used as the source for face + hand tracking -->
+  <video id="webcam" autoplay playsinline muted></video>
+
+  <div id="ui">
+    <div id="panel">
+      <h1>🌴 Jungle VRM Tracker</h1>
+
+      <label>VRM Model URL</label>
+      <input id="vrmUrl" type="text"
+        value="https://raw.githubusercontent.com/pixiv/three-vrm/dev/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm">
+      <button id="loadModelBtn">Load Model</button>
+
+      <div class="row">
+        <button id="startCamBtn">Start Camera Tracking</button>
+        <span id="camStatus" class="status">camera off</span>
+      </div>
+
+      <div class="row">
+        <button id="startMicBtn">Start Lip Sync (Mic)</button>
+        <span id="micStatus" class="status">mic off</span>
+      </div>
+
+      <label>Zoom</label>
+      <input id="zoomSlider" type="range" min="0.5" max="4" step="0.01" value="1.6">
+
+      <p class="hint">
+        Drag to pan the camera around Luna &mdash; scroll or use the slider to zoom.
+        The model stays facing forward; only her head, eyes and hands react to you.
+      </p>
+    </div>
+
+    <div id="loading" class="hidden">Loading model&hellip;</div>
+  </div>
+
+  <!-- Three.js / VRM (ESM via jsdelivr) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/",
+      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.1/lib/three-vrm.module.min.js"
+    }
+  }
+  </script>
+
+  <!-- MediaPipe Tasks Vision for face + hand landmark tracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.js"></script>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>
