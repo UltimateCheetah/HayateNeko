@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hayate Neko - VRM Tracker</title>
+<style>
+  :root { --panel-bg: rgba(10, 20, 14, 0.82); --accent: #7CFF7C; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #06120a; overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #eaffea;
+  }
+  #app { position: relative; width: 100vw; height: 100vh; }
+  canvas#three-canvas { display: block; width: 100%; height: 100%; }
+
+  video#webcam {
+    position: absolute; bottom: 14px; right: 14px;
+    width: 180px; height: 135px; border-radius: 10px;
+    border: 2px solid var(--accent); object-fit: cover;
+    transform: scaleX(-1); opacity: 0.85; z-index: 5;
+    box-shadow: 0 0 18px rgba(124,255,124,0.35);
+  }
+
+  #hud {
+    position: absolute; top: 14px; left: 14px; z-index: 6;
+    background: var(--panel-bg); border: 1px solid rgba(124,255,124,0.35);
+    border-radius: 12px; padding: 14px 16px; width: 280px;
+    backdrop-filter: blur(6px);
+  }
+  #hud h1 { font-size: 15px; margin: 0 0 8px; color: var(--accent); letter-spacing: 0.5px; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; font-size: 12.5px; }
+  .row label { opacity: 0.85; }
+  .status { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: #ff5b5b; box-shadow: 0 0 6px #ff5b5b; }
+  .status.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  button {
+    background: rgba(124,255,124,0.12); color: var(--accent);
+    border: 1px solid rgba(124,255,124,0.5); border-radius: 8px;
+    padding: 7px 10px; cursor: pointer; font-size: 12.5px; width: 100%;
+    margin-top: 8px; transition: background 0.15s;
+  }
+  button:hover { background: rgba(124,255,124,0.25); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #loadOverlay {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at center, #0e2013 0%, #04100a 100%);
+    transition: opacity 0.6s ease;
+  }
+  #loadOverlay.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 4px solid rgba(124,255,124,0.2); border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite; margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loadText { font-size: 13px; color: #bdf5bd; }
+  #loadBarWrap { width: 240px; height: 6px; background: rgba(124,255,124,0.15); border-radius: 4px; margin-top: 14px; overflow: hidden; }
+  #loadBar { height: 100%; width: 0%; background: var(--accent); transition: width 0.2s; }
+  #errBox {
+    position: absolute; bottom: 14px; left: 14px; z-index: 30;
+    max-width: 420px; background: rgba(120,10,10,0.9); border: 1px solid #ff8080;
+    border-radius: 10px; padding: 10px 14px; font-size: 12px; display: none; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="three-canvas"></canvas>
+  <video id="webcam" autoplay playsinline muted></video>
+
+  <div id="hud">
+    <h1>HAYATE NEKO // TRACKER</h1>
+    <div class="row"><label><span class="status" id="dotModel"></span>VRM Model</label><span id="txtModel">loading</span></div>
+    <div class="row"><label><span class="status" id="dotFace"></span>Face Tracking</label><span id="txtFace">off</span></div>
+    <div class="row"><label><span class="status" id="dotHands"></span>Hand Tracking</label><span id="txtHands">off</span></div>
+    <div class="row"><label><span class="status" id="dotLip"></span>Lip Sync</label><span id="txtLip">off</span></div>
+    <button id="btnStart">Enable Camera + Tracking</button>
+    <button id="btnMic">Enable Mic Lip Sync (fallback)</button>
+  </div>
+
+  <div id="loadOverlay">
+    <div class="spinner"></div>
+    <div id="loadText">Loading Hayate Neko...</div>
+    <div id="loadBarWrap"><div id="loadBar"></div></div>
+  </div>
+
+  <div id="errBox"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.1/lib/three-vrm.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
+import {
+  FaceLandmarker,
+  HandLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ---------------------------------------------------------
+   CONFIG
+--------------------------------------------------------- */
+const VRM_URL = "https://raw.githubusercontent.com/UltimateCheetah/HayateNeko/main/Hayate%20Neko.vrm";
+
+const dom = {
+  model: document.getElementById("txtModel"),
+  face: document.getElementById("txtFace"),
+  hands: document.getElementById("txtHands"),
+  lip: document.getElementById("txtLip"),
+  dotModel: document.getElementById("dotModel"),
+  dotFace: document.getElementById("dotFace"),
+  dotHands: document.getElementById("dotHands"),
+  dotLip: document.getElementById("dotLip"),
+  loadOverlay: document.getElementById("loadOverlay"),
+  loadText: document.getElementById("loadText"),
+  loadBar: document.getElementById("loadBar"),
+  errBox: document.getElementById("errBox"),
+  btnStart: document.getElementById("btnStart"),
+  btnMic: document.getElementById("btnMic"),
+  webcam: document.getElementById("webcam"),
+};
+
+function showError(msg) {
+  console.error(msg);
+  dom.errBox.style.display = "block";
+  dom.errBox.textContent = "⚠ " + msg;
+}
+
+/* ---------------------------------------------------------
+   THREE.JS SCENE
+--------------------------------------------------------- */
+const canvas = document.getElementById("three-canvas");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0d2414, 0.028);
+scene.background = new THREE.Color(0x0a1f10);
+
+const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 1.35, 2.4);
+camera.lookAt(0, 1.15, 0);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* Lighting */
+const hemi = new THREE.HemisphereLight(0xbfffd0, 0x0a1c0e, 1.15);
+scene.add(hemi);
+
+const sunLight = new THREE.DirectionalLight(0xdfffe0, 1.4);
+sunLight.position.set(3, 6, 2);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(1024, 1024);
+sunLight.shadow.camera.near = 1;
+sunLight.shadow.camera.far = 20;
+scene.add(sunLight);
+
+const rimLight = new THREE.PointLight(0x8affc1, 0.6, 10);
+rimLight.position.set(-2, 2, -2);
+scene.add(rimLight);
+
+/* Ground */
+const groundGeo = new THREE.CircleGeometry(14, 48);
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x264d1e, roughness: 1 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* Procedural jungle: trunks, canopies, ferns, fireflies */
+const jungleGroup = new THREE.Group();
+scene.add(jungleGroup);
+
+function makeTree(x, z, scale) {
+  const g = new THREE.Group();
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.95 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 3.2 * scale, 7), trunkMat);
+  trunk.position.y = 1.6 * scale;
+  trunk.castShadow = true;
+  g.add(trunk);
+
+  const leafColors = [0x1f6b2e, 0x2c8a3d, 0x14522a];
+  for (let i = 0; i < 3; i++) {
+    const leafMat = new THREE.MeshStandardMaterial({ color: leafColors[i % leafColors.length], roughness: 0.85 });
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry((1.1 - i * 0.2) * scale, 1.5 * scale, 8), leafMat);
+    leaf.position.y = (3.0 + i * 0.75) * scale;
+    leaf.castShadow = true;
+    g.add(leaf);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+const treePositions = [
+  [-3.5, -3.5, 1.1], [3.6, -2.8, 1.3], [-4.6, -1.0, 0.9], [4.4, -0.6, 1.0],
+  [-2.4, -5.5, 1.4], [2.6, -5.8, 1.2], [-5.5, 2.4, 1.1], [5.4, 2.1, 1.0],
+  [-1.2, -7.0, 1.6], [1.6, -7.2, 1.5], [0, -8.5, 1.8], [-6.5, -2.0, 1.2], [6.5, -1.8, 1.2]
+];
+treePositions.forEach(([x, z, s]) => jungleGroup.add(makeTree(x, z, s)));
+
+/* Ferns */
+const fernMat = new THREE.MeshStandardMaterial({ color: 0x2f7a34, roughness: 0.9, side: THREE.DoubleSide });
+for (let i = 0; i < 40; i++) {
+  const angle = Math.random() * Math.PI * 2;
+  const radius = 2.6 + Math.random() * 4.5;
+  const x = Math.cos(angle) * radius;
+  const z = -Math.abs(Math.sin(angle) * radius) - 1.0;
+  const fern = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.7, 5), fernMat);
+  fern.position.set(x, 0.35, z);
+  fern.rotation.y = Math.random() * Math.PI;
+  fern.rotation.z = (Math.random() - 0.5) * 0.4;
+  fern.castShadow = true;
+  jungleGroup.add(fern);
+}
+
+/* Fireflies */
+const fireflyGeo = new THREE.SphereGeometry(0.025, 6, 6);
+const fireflyMat = new THREE.MeshBasicMaterial({ color: 0xbfff8a });
+const fireflies = [];
+for (let i = 0; i < 26; i++) {
+  const f = new THREE.Mesh(fireflyGeo, fireflyMat);
+  f.position.set((Math.random() - 0.5) * 6, 0.6 + Math.random() * 2, (Math.random() - 0.7) * 6);
+  f.userData.phase = Math.random() * Math.PI * 2;
+  f.userData.base = f.position.clone();
+  fireflies.push(f);
+  scene.add(f);
+}
+
+/* Volumetric-ish light shafts (simple planes) */
+const shaftMat = new THREE.MeshBasicMaterial({ color: 0xdfffcf, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false });
+for (let i = 0; i < 5; i++) {
+  const shaft = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 8), shaftMat);
+  shaft.position.set(-4 + i * 2, 3, -3 - Math.random() * 3);
+  shaft.rotation.y = Math.random() * 0.3;
+  shaft.rotation.z = 0.15;
+  scene.add(shaft);
+}
+
+/* ---------------------------------------------------------
+   VRM LOADING
+--------------------------------------------------------- */
+let vrm = null;
+let clock = new THREE.Clock();
+
+const loader = new GLTFLoader();
+loader.register((parser) => new VRMLoaderPlugin(parser));
+
+function setLoadProgress(pct, label) {
+  dom.loadBar.style.width = pct + "%";
+  if (label) dom.loadText.textContent = label;
+}
+
+loader.load(
+  VRM_URL,
+  (gltf) => {
+    const loadedVrm = gltf.userData.vrm;
+    if (!loadedVrm) {
+      showError("File loaded but no VRM data was found in it. Confirm the .vrm file is valid.");
+      return;
+    }
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    VRMUtils.removeUnnecessaryJoints(gltf.scene);
+    loadedVrm.scene.traverse((obj) => {
+      obj.frustumCulled = false;
+      if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; }
+    });
+
+    vrm = loadedVrm;
+    scene.add(vrm.scene);
+
+    // Face model forward -1z convention fix (three-vrm auto-rotates for VRM0),
+    // just make sure it's facing the camera:
+    vrm.scene.rotation.y = Math.PI;
+
+    // Frame camera roughly to head height if humanoid present
+    try {
+      const head = vrm.humanoid?.getNormalizedBoneNode("head");
+      if (head) {
+        const headPos = new THREE.Vector3();
+        head.getWorldPosition(headPos);
+        camera.position.set(0, headPos.y + 0.15, 1.1);
+        camera.lookAt(0, headPos.y, 0);
+      }
+    } catch (e) { /* non-fatal */ }
+
+    dom.model.textContent = "loaded";
+    dom.dotModel.classList.add("on");
+    setLoadProgress(100, "Ready");
+    setTimeout(() => dom.loadOverlay.classList.add("hidden"), 400);
+  },
+  (progress) => {
+    if (progress.total) {
+      const pct = Math.min(100, Math.round((progress.loaded / progress.total) * 100));
+      setLoadProgress(pct, `Loading Hayate Neko... ${pct}%`);
+    }
+  },
+  (error) => {
+    console.error(error);
+    dom.model.textContent = "error";
+    setLoadProgress(0, "Load failed");
+    showError(
+      "Could not load the VRM file. Common causes: the raw.githubusercontent.com URL is blocked by CORS/network policy on your host, the repo is private, or the filename encoding is wrong. " +
+      "Verified working URL used here: " + VRM_URL
+    );
+  }
+);
+
+/* ---------------------------------------------------------
+   IDLE ANIMATION (breathing / sway) - runs even without tracking
+--------------------------------------------------------- */
+function applyIdle(t) {
+  if (!vrm || !vrm.humanoid) return;
+  const chest = vrm.humanoid.getNormalizedBoneNode("chest");
+  const head = vrm.humanoid.getNormalizedBoneNode("head");
+  const spine = vrm.humanoid.getNormalizedBoneNode("spine");
+  if (chest) chest.rotation.x = Math.sin(t * 1.2) * 0.015;
+  if (spine) spine.rotation.z = Math.sin(t * 0.6) * 0.01;
+  if (head && !faceTrackingActive) {
+    head.rotation.y = Math.sin(t * 0.4) * 0.05;
+    head.rotation.x = Math.sin(t * 0.5) * 0.03;
+  }
+}
+
+/* ---------------------------------------------------------
+   MEDIAPIPE: FACE + HAND TRACKING
+--------------------------------------------------------- */
+let faceLandmarker = null;
+let handLandmarker = null;
+let faceTrackingActive = false;
+let handTrackingActive = false;
+let lastVideoTime = -1;
+let latestFaceResult = null;
+let latestHandResult = null;
+
+async function initMediaPipe() {
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+
+  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate: "GPU"
+    },
+    outputFaceBlendshapes: true,
+    outputFacialTransformationMatrixes: true,
+    runningMode: "VIDEO",
+    numFaces: 1
+  });
+
+  handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 2
+  });
+}
+
+async function startCameraTracking() {
+  dom.btnStart.disabled = true;
+  dom.btnStart.textContent = "Starting...";
+  try {
+    if (!faceLandmarker || !handLandmarker) await initMediaPipe();
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: "user" },
+      audio: false
+    });
+    dom.webcam.srcObject = stream;
+    await new Promise((res) => (dom.webcam.onloadedmetadata = res));
+    dom.webcam.play();
+
+    faceTrackingActive = true;
+    handTrackingActive = true;
+    dom.face.textContent = "on";
+    dom.hands.textContent = "on";
+    dom.dotFace.classList.add("on");
+    dom.dotHands.classList.add("on");
+    dom.lip.textContent = "on (face blendshapes)";
+    dom.dotLip.classList.add("on");
+    dom.btnStart.textContent = "Tracking Active";
+
+    predictLoop();
+  } catch (err) {
+    showError("Camera/tracking init failed: " + err.message + ". You can still use mic-based lip sync as a fallback.");
+    dom.btnStart.disabled = false;
+    dom.btnStart.textContent = "Enable Camera + Tracking";
+  }
+}
+
+function predictLoop() {
+  if (!faceTrackingActive) return;
+  const nowMs = performance.now();
+  if (dom.webcam.currentTime !== lastVideoTime && dom.webcam.readyState >= 2) {
+    lastVideoTime = dom.webcam.currentTime;
+    try {
+      latestFaceResult = faceLandmarker.detectForVideo(dom.webcam, nowMs);
+      latestHandResult = handLandmarker.detectForVideo(dom.webcam, nowMs);
+    } catch (e) {
+      console.warn("Tracking frame skipped:", e);
+    }
+  }
+  requestAnimationFrame(predictLoop);
+}
+
+/* Map MediaPipe blendshape categories -> VRM expression names */
+const BLENDSHAPE_MAP = {
+  eyeBlinkLeft: "blinkLeft",
+  eyeBlinkRight: "blinkRight",
+  mouthSmileLeft: "happy",
+  mouthSmileRight: "happy",
+  browInnerUp: "surprised",
+  jawOpen: "aa",
+  mouthFunnel: "ou",
+  mouthPucker: "ou",
+  mouthStretchLeft: "ee",
+  mouthStretchRight: "ee",
+};
+
+function applyFaceTracking() {
+  if (!vrm || !latestFaceResult || !latestFaceResult.faceBlendshapes?.length) return;
+  const categories = latestFaceResult.faceBlendshapes[0].categories;
+  const em = vrm.expressionManager;
+  if (!em) return;
+
+  const scores = {};
+  for (const c of categories) scores[c.categoryName] = c.score;
+
+  // Eyes (blink)
+  if (scores.eyeBlinkLeft !== undefined) em.setValue("blinkLeft", scores.eyeBlinkLeft);
+  if (scores.eyeBlinkRight !== undefined) em.setValue("blinkRight", scores.eyeBlinkRight);
+
+  // Eyebrows / surprise
+  if (scores.browInnerUp !== undefined) em.setValue("surprised", Math.min(1, scores.browInnerUp * 1.3));
+
+  // Smile
+  const smile = Math.max(scores.mouthSmileLeft || 0, scores.mouthSmileRight || 0);
+  em.setValue("happy", smile);
+
+  // Lip sync mouth shapes driven directly by real mouth motion
+  em.setValue("aa", scores.jawOpen || 0);
+  em.setValue("ou", Math.max(scores.mouthFunnel || 0, scores.mouthPucker || 0));
+  em.setValue("ee", Math.max(scores.mouthStretchLeft || 0, scores.mouthStretchRight || 0) * 0.7);
+
+  // Head rotation from facial transformation matrix
+  const matrixData = latestFaceResult.facialTransformationMatrixes;
+  if (matrixData && matrixData.length) {
+    const m = new THREE.Matrix4().fromArray(matrixData[0].data);
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    const euler = new THREE.Euler().setFromQuaternion(q, "YXZ");
+    const head = vrm.humanoid.getNormalizedBoneNode("head");
+    if (head) {
+      head.rotation.x = THREE.MathUtils.clamp(-euler.x, -0.5, 0.5);
+      head.rotation.y = THREE.MathUtils.clamp(-euler.y + Math.PI, -0.6, 0.6) - Math.PI;
+      head.rotation.z = THREE.MathUtils.clamp(euler.z, -0.4, 0.4);
+    }
+  }
+
+  // Eye look-at (simple, based on iris landmarks 468-477 if present)
+  const lm = latestFaceResult.faceLandmarks?.[0];
+  if (lm && lm.length > 477) {
+    const leftIris = lm[468];
+    const rightIris = lm[473];
+    const lookX = ((leftIris.x + rightIris.x) / 2 - 0.5) * -2;
+    const lookY = ((leftIris.y + rightIris.y) / 2 - 0.5) * -2;
+    if (vrm.lookAt) {
+      vrm.lookAt.applier && vrm.lookAt.applier.applyYawPitch
+        ? vrm.lookAt.applier.applyYawPitch(lookX * 20, lookY * 15)
+        : null;
+    }
+  }
+}
+
+/* Map hand landmarks -> VRM finger/arm bones (simplified rig, index-finger-driven arm reach) */
+const HAND_BONE_NAMES = {
+  wrist: "rightHand",
+  thumb: ["rightThumbProximal", "rightThumbIntermediate", "rightThumbDistal"],
+  index: ["rightIndexProximal", "rightIndexIntermediate", "rightIndexDistal"],
+  middle: ["rightMiddleProximal", "rightMiddleIntermediate", "rightMiddleDistal"],
+  ring: ["rightRingProximal", "rightRingIntermediate", "rightRingDistal"],
+  little: ["rightLittleProximal", "rightLittleIntermediate", "rightLittleDistal"],
+};
+
+function curlFromLandmarks(lm, baseIdx, midIdx, tipIdx) {
+  const a = new THREE.Vector3(lm[baseIdx].x, -lm[baseIdx].y, -lm[baseIdx].z);
+  const b = new THREE.Vector3(lm[midIdx].x, -lm[midIdx].y, -lm[midIdx].z);
+  const c = new THREE.Vector3(lm[tipIdx].x, -lm[tipIdx].y, -lm[tipIdx].z);
+  const v1 = a.clone().sub(b).normalize();
+  const v2 = c.clone().sub(b).normalize();
+  const angle = v1.angleTo(v2);
+  return THREE.MathUtils.clamp((Math.PI - angle) / Math.PI, 0, 1);
+}
+
+function applyHandTracking() {
+  if (!vrm || !vrm.humanoid || !latestHandResult || !latestHandResult.landmarks?.length) return;
+
+  latestHandResult.landmarks.forEach((lm, i) => {
+    const handednessInfo = latestHandResult.handedness[i]?.[0]?.categoryName; // "Left"/"Right" (mirrored via webcam)
+    const side = handednessInfo === "Left" ? "right" : "left"; // mirror correction for selfie view
+
+    const fingers = {
+      thumb: [1, 2, 4],
+      index: [5, 6, 8],
+      middle: [9, 10, 12],
+      ring: [13, 14, 16],
+      little: [17, 18, 20],
+    };
+
+    for (const [finger, [baseIdx, midIdx, tipIdx]] of Object.entries(fingers)) {
+      const curl = curlFromLandmarks(lm, baseIdx, midIdx, tipIdx);
+      const boneNames = [
+        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Proximal`,
+        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Intermediate`,
+        `${side}${finger.charAt(0).toUpperCase() + finger.slice(1)}Distal`,
+      ];
+      boneNames.forEach((name) => {
+        const bone = vrm.humanoid.getNormalizedBoneNode(name);
+        if (bone) bone.rotation.z = side === "right" ? -curl * 1.2 : curl * 1.2;
+      });
+    }
+
+    // Wrist-driven lower arm rotation (rough reach approximation)
+    const wrist = lm[0];
+    const lowerArm = vrm.humanoid.getNormalizedBoneNode(`${side}LowerArm`);
+    if (lowerArm) {
+      lowerArm.rotation.z = side === "right"
+        ? THREE.MathUtils.clamp((0.5 - wrist.y) * 1.5, -0.3, 1.2)
+        : -THREE.MathUtils.clamp((0.5 - wrist.y) * 1.5, -0.3, 1.2);
+      lowerArm.rotation.y = THREE.MathUtils.clamp((wrist.x - 0.5) * 1.2, -0.6, 0.6);
+    }
+  });
+}
+
+/* ---------------------------------------------------------
+   MIC-BASED LIP SYNC (fallback, works without face tracking)
+--------------------------------------------------------- */
+let audioCtx = null;
+let analyser = null;
+let micDataArray = null;
+let micActive = false;
+
+async function startMicLipSync() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    micDataArray = new Uint8Array(analyser.frequencyBinCount);
+    source.connect(analyser);
+    micActive = true;
+    dom.lip.textContent = "on (mic)";
+    dom.dotLip.classList.add("on");
+    dom.btnMic.textContent = "Mic Lip Sync Active";
+    dom.btnMic.disabled = true;
+  } catch (err) {
+    showError("Mic access failed: " + err.message);
+  }
+}
+
+function applyMicLipSync() {
+  if (!vrm || !micActive || !analyser || faceTrackingActive) return; // face tracking takes priority if active
+  analyser.getByteFrequencyData(micDataArray);
+  let sum = 0;
+  for (let i = 0; i < micDataArray.length; i++) sum += micDataArray[i];
+  const avg = sum / micDataArray.length;
+  const openAmount = THREE.MathUtils.clamp((avg - 8) / 60, 0, 1);
+  const em = vrm.expressionManager;
+  if (em) em.setValue("aa", openAmount);
+}
+
+/* ---------------------------------------------------------
+   BUTTON HOOKS
+--------------------------------------------------------- */
+dom.btnStart.addEventListener("click", startCameraTracking);
+dom.btnMic.addEventListener("click", startMicLipSync);
+
+/* ---------------------------------------------------------
+   RENDER LOOP
+--------------------------------------------------------- */
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const t = clock.elapsedTime;
+
+  applyIdle(t);
+  if (faceTrackingActive) applyFaceTracking();
+  if (handTrackingActive) applyHandTracking();
+  applyMicLipSync();
+
+  fireflies.forEach((f) => {
+    f.position.y = f.userData.base.y + Math.sin(t * 1.5 + f.userData.phase) * 0.3;
+    f.position.x = f.userData.base.x + Math.sin(t * 0.7 + f.userData.phase) * 0.2;
+    f.material.opacity = 0.6 + Math.sin(t * 3 + f.userData.phase) * 0.4;
+  });
+
+  if (vrm) vrm.update(dt);
+
+  renderer.render(scene, camera);
+}
+animate();
+
+/* Global error trap so failures surface in the UI instead of a blank screen */
+window.addEventListener("error", (e) => showError("Runtime error: " + e.message));
+window.addEventListener("unhandledrejection", (e) => showError("Promise error: " + (e.reason?.message || e.reason)));
+</script>
+</body>
+  </html>
